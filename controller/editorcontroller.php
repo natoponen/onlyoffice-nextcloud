@@ -448,9 +448,11 @@ class EditorController extends Controller {
 
         $recipientIds = [];
         foreach ($emails as $email) {
+            $substrToDelete = "+" . $email . " ";
+            $comment = str_replace($substrToDelete, "", $comment);
             $recipients = $this->userManager->getByEmail($email);
             foreach ($recipients as $recipient) {
-                $recipientId = $recipient->getUID(); 
+                $recipientId = $recipient->getUID();
                 if (!in_array($recipientId, $recipientIds)) {
                     array_push($recipientIds, $recipientId);
                 }
@@ -477,6 +479,10 @@ class EditorController extends Controller {
             return ["error" => $this->trans->t("Failed to send notification")];
         }
 
+        if (strlen($comment) > 64) {
+            $comment = substr($comment, 0, 61) . "...";
+        }
+
         $notificationManager = \OC::$server->getNotificationManager();
         $notification = $notificationManager->createNotification();
         $notification->setApp($this->appName)
@@ -491,34 +497,34 @@ class EditorController extends Controller {
 
         $shareMemberGroups = $this->shareManager->shareWithGroupMembersOnly();
         $canShare = (($file->getPermissions() & Constants::PERMISSION_SHARE) === Constants::PERMISSION_SHARE)
-                    && !$isMemberExcludedGroups;
+            && !$isMemberExcludedGroups
+            && $this->config->GetCustomizationMentionShare();
 
         $accessList = $this->shareManager->getAccessList($file);
 
         foreach ($recipientIds as $recipientId) {
             if (!in_array($recipientId, $accessList["users"])) {
-                if (!$canShare) {
-                    continue;
-                }
-                if ($shareMemberGroups) {
-                    $recipient = $this->userManager->get($recipientId);
-                    $recipientGroups = $this->groupManager->getUserGroupIds($recipient);
-                    if (empty(array_intersect($currentUserGroups, $recipientGroups))) {
-                        continue;
+                if ($canShare) {
+                    if ($shareMemberGroups) {
+                        $recipient = $this->userManager->get($recipientId);
+                        $recipientGroups = $this->groupManager->getUserGroupIds($recipient);
+                        if (empty(array_intersect($currentUserGroups, $recipientGroups))) {
+                            continue;
+                        }
                     }
+
+                    $share = $this->shareManager->newShare();
+                    $share->setNode($file)
+                        ->setShareType(IShare::TYPE_USER)
+                        ->setSharedBy($userId)
+                        ->setSharedWith($recipientId)
+                        ->setShareOwner($userId)
+                        ->setPermissions(Constants::PERMISSION_READ);
+
+                    $this->shareManager->createShare($share);
+
+                    $this->logger->debug("mention: share $fileId to $recipientId", ["app" => $this->appName]);
                 }
-
-                $share = $this->shareManager->newShare();
-                $share->setNode($file)
-                    ->setShareType(IShare::TYPE_USER)
-                    ->setSharedBy($userId)
-                    ->setSharedWith($recipientId)
-                    ->setShareOwner($userId)
-                    ->setPermissions(Constants::PERMISSION_READ);
-
-                $this->shareManager->createShare($share);
-
-                $this->logger->debug("mention: share $fileId to $recipientId", ["app" => $this->appName]);
             }
 
             $notification->setUser($recipientId);
